@@ -1,5 +1,6 @@
 #include <dawn/webgpu_cpp.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -754,6 +755,8 @@ void Run(std::string testLabel, const TestArgs& args,
          DataStruct& data) {
     uint32_t testsPassed = 0;
     uint64_t totalTime = 0ULL;
+    uint64_t maxTime = 0ULL;
+    uint64_t minTime = ~0ULL;
     double totalSpins = 0;
     uint32_t lookbackLength = 0;
     uint32_t fallbacksInitiated = 0;
@@ -777,6 +780,8 @@ void Run(std::string testLabel, const TestArgs& args,
         if (i != 0) {
             if (args.shouldTime) {
                 const uint64_t t = GetTime(args.gpu, &args.buffs, passCount);
+                maxTime = std::max(t, maxTime);
+                minTime = std::min(t, minTime);
                 totalTime += t;
                 if (args.shouldRecord) {
                     data.time[i - 1] = static_cast<double>(t);
@@ -847,6 +852,14 @@ void Run(std::string testLabel, const TestArgs& args,
         double dTime = static_cast<double>(totalTime);
         dTime /= 1e9;
         std::cout << "Total time elapsed " << dTime << std::endl;
+        std::cout << "Average time "
+                  << dTime / static_cast<double>(args.batchSize)
+                  << std::endl;
+        std::cout << "Min time "
+                  << static_cast<double>(minTime)
+                  << " / Max time "
+                  << static_cast<double>(maxTime)
+                  << std::endl;
         double speed =
             ((uint64_t)args.size * (uint64_t)(args.batchSize)) / dTime;
         printf("Estimated speed %e ele/s\n", speed);
@@ -1069,7 +1082,7 @@ int main(int argc, char* argv[]) {
     constexpr uint32_t MAX_SIMULATE = 9;  // Max power to simulate blocking
 
     const uint32_t size = testType == Csdldf_prof ? 1 << 19 : 1 << 25;    // Size of the scan operation
-    const uint32_t batchSize = testType == Csdldf_prof ? 100 : 2000;  // How many tests to run
+    const uint32_t batchSize = testType == Csdldf_prof ? 1000 : 2000;  // How many tests to run
     const uint32_t
         workTiles =  // Work Tiles/Thread Blocks to launch based on input
         (size + PART_SIZE - 1) / PART_SIZE;
