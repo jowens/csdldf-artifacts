@@ -9,6 +9,9 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <stdexcept> // For std::stoul exceptions (std::invalid_argument, std::out_of_range)
+#include <limits>    // For std::numeric_limits
+#include <iomanip>   // For std::fixed and std::setprecision
 
 #include "CSDLDF.cuh"
 
@@ -151,7 +154,6 @@ public:
 
             float millis = 0.0f;
             cudaEventElapsedTime(&millis, start, stop);
-            std::cout << "Trial " << i << " with time (ms) " << millis << std::endl;
 
             if (i > 0) {
                 testsPassed += DispatchValidateInclusive(scanOut, err, size) ? 1 : 0;
@@ -249,31 +251,187 @@ std::vector<std::pair<uint32_t, std::vector<float>>> RunCudaTestsMemcpy(
     return results;
 }
 
+// Definition of the function to print usage instructions
+void printUsage(const char* progName) {
+    std::cerr << "\nUsage: " << progName << " [options] <testType> [record <csvName>]" << std::endl;
+    std::cerr << "\nOptions (must appear before <testType>):" << std::endl;
+    std::cerr << "  --testBatchSize <N> : Set test batch size (uint32_t, default: 2000)." << std::endl;
+    std::cerr << "  --minPow <N>        : Set minimum power (uint32_t, default: 10)." << std::endl;
+    std::cerr << "  --maxPow <N>        : Set maximum power (uint32_t, default: 25)." << std::endl;
+    std::cerr << "\nRequired Argument (must follow any options):" << std::endl;
+    std::cerr << "  <testType>          : Type of test. Must be one of 'cub', 'csdldf', 'memcpy'." << std::endl;
+    std::cerr << "\nOptional Recording (must appear immediately after <testType>):" << std::endl;
+    std::cerr << "  record <csvName>    : If 'record' is specified, the next argument is the CSV filename." << std::endl;
+    std::cerr << "\nExamples:" << std::endl;
+    std::cerr << "  " << progName << " cub" << std::endl;
+    std::cerr << "  " << progName << " --testBatchSize 1000 --minPow 5 csdldf record results.csv" << std::endl;
+    std::cerr << "  " << progName << " --maxPow 30 memcpy" << std::endl;
+    std::cerr << "  " << progName << " cub record data.csv" << std::endl;
+}
+
+// Helper function to parse a string to uint32_t with range checking
+bool parseUint32(const char* str_val, uint32_t& out_val, const std::string& arg_name, const char* progName) {
+    try {
+        unsigned long temp_val = std::stoul(str_val); // std::stoul is in <string>
+        if (temp_val > std::numeric_limits<uint32_t>::max()) {
+            std::cerr << "Error: Value for " << arg_name << " ('" << str_val << "') is out of range for uint32_t." << std::endl;
+            printUsage(progName);
+            return false;
+        }
+        out_val = static_cast<uint32_t>(temp_val);
+        return true;
+    } catch (const std::invalid_argument& ia) {
+        std::cerr << "Error: Invalid number format for " << arg_name << ": '" << str_val << "'" << std::endl;
+    } catch (const std::out_of_range& oor) { // This checks range for unsigned long
+        std::cerr << "Error: Number out of range for " << arg_name << ": '" << str_val << "'" << std::endl;
+    }
+    // If any exception occurred or range check failed and printed error:
+    printUsage(progName);
+    return false;
+}
+
+void printGpuProperties(int deviceNum) {
+    cudaDeviceProp deviceProp;
+    cudaError_t error_id = cudaGetDeviceProperties(&deviceProp, deviceNum);
+
+    if (error_id != cudaSuccess) {
+        std::cerr << "cudaGetDeviceProperties returned " << static_cast<int>(error_id)
+                  << " for device " << deviceNum << " -> " << cudaGetErrorString(error_id) << std::endl;
+        return;
+    }
+
+    std::cout << "--- GPU Device " << deviceNum << " Properties ---" << std::endl;
+    std::cout << "Name:                     " << deviceProp.name << std::endl;
+    std::cout << "Compute Capability:       " << deviceProp.major << "." << deviceProp.minor << std::endl;
+    std::cout << "Total Global Memory:      " << std::fixed << std::setprecision(2)
+              << static_cast<double>(deviceProp.totalGlobalMem) / (1024.0 * 1024.0) << " MB" << std::endl;
+    std::cout << "Shared Memory Per Block:  " << deviceProp.sharedMemPerBlock / 1024.0 << " KB" << std::endl;
+    std::cout << "Registers Per Block:      " << deviceProp.regsPerBlock << std::endl;
+    std::cout << "Warp Size:                " << deviceProp.warpSize << std::endl;
+    std::cout << "Max Threads Per Block:    " << deviceProp.maxThreadsPerBlock << std::endl;
+    std::cout << "Max Threads Dim (x,y,z):  (" << deviceProp.maxThreadsDim[0] << ", "
+              << deviceProp.maxThreadsDim[1] << ", " << deviceProp.maxThreadsDim[2] << ")" << std::endl;
+    std::cout << "Max Grid Size (x,y,z):    (" << deviceProp.maxGridSize[0] << ", "
+              << deviceProp.maxGridSize[1] << ", " << deviceProp.maxGridSize[2] << ")" << std::endl;
+    std::cout << "Clock Rate:               " << deviceProp.clockRate / 1000.0 << " MHz" << std::endl; // kHz to MHz
+    std::cout << "Memory Clock Rate:        " << deviceProp.memoryClockRate / 1000.0 << " MHz" << std::endl; // kHz to MHz
+    std::cout << "Memory Bus Width:         " << deviceProp.memoryBusWidth << " bits" << std::endl;
+    std::cout << "L2 Cache Size:            " << deviceProp.l2CacheSize / 1024.0 << " KB" << std::endl;
+    std::cout << "Multiprocessor Count:     " << deviceProp.multiProcessorCount << std::endl;
+    std::cout << "------------------------------------" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
     // Allowed usage: <testType> [record [csvName]]
     // testType must be one of "cub", "csdldf", or "memcpy".
-    if (argc < 2 || argc > 4) {
-        std::cerr << "Usage: " << argv[0] << " <cub|csdldf|memcpy> [record [csvName]]\n";
-        return EXIT_FAILURE;
-    }
-    std::string testType = argv[1];
-    bool record = false;
-    std::string csvName = "";
-    if (argc >= 3) {
-        if (std::string(argv[2]) == "record") {
-            record = true;
-            if (argc == 4) {
-                csvName = argv[3];
-            }
-        } else {
-            std::cerr << "Unknown second argument: " << argv[2] << std::endl;
-            return EXIT_FAILURE;
-        }
-    }
 
+    // defaults
     uint32_t testBatchSize = 2000;
     uint32_t minPow = 10;
     uint32_t maxPow = 25;
+    std::string testType;
+    std::string csvName = "";
+    bool record = false;
+
+        int currentIndex = 1; // To keep track of the current argument being processed
+
+    // --- Phase 1: Parse optional numeric arguments (--testBatchSize, --minPow, --maxPow) ---
+    // These must appear before testType
+    while (currentIndex < argc) {
+        std::string currentArg = argv[currentIndex];
+        if (currentArg == "--testBatchSize") {
+            if (currentIndex + 1 < argc) {
+                if (!parseUint32(argv[currentIndex + 1], testBatchSize, "--testBatchSize", argv[0])) return 1;
+                currentIndex += 2; // Consumed option and its value
+            } else {
+                std::cerr << "Error: --testBatchSize option requires a value." << std::endl;
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (currentArg == "--minPow") {
+            if (currentIndex + 1 < argc) {
+                if (!parseUint32(argv[currentIndex + 1], minPow, "--minPow", argv[0])) return 1;
+                currentIndex += 2;
+            } else {
+                std::cerr << "Error: --minPow option requires a value." << std::endl;
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (currentArg == "--maxPow") {
+            if (currentIndex + 1 < argc) {
+                if (!parseUint32(argv[currentIndex + 1], maxPow, "--maxPow", argv[0])) return 1;
+                currentIndex += 2;
+            } else {
+                std::cerr << "Error: --maxPow option requires a value." << std::endl;
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else {
+            // Argument is not one of the known optional numeric flags.
+            // Assume it's the start of testType or an unknown argument.
+            break;
+        }
+    }
+
+    // --- Phase 2: Parse testType (required) ---
+    if (currentIndex >= argc) {
+        std::cerr << "Error: Required argument <testType> is missing." << std::endl;
+        printUsage(argv[0]);
+        return 1;
+    }
+
+    testType = argv[currentIndex];
+    if (testType != "cub" && testType != "csdldf" && testType != "memcpy") {
+        std::cerr << "Error: Invalid <testType> specified: '" << testType << "'." << std::endl;
+        std::cerr << "       <testType> must be one of: 'cub', 'csdldf', 'memcpy'." << std::endl;
+        printUsage(argv[0]);
+        return 1;
+    }
+    currentIndex++; // Consumed testType
+
+    // --- Phase 3: Parse 'record' and 'csvName' (optional, must follow testType) ---
+    if (currentIndex < argc) { // Check if there are more arguments after testType
+        std::string potentialRecordArg = argv[currentIndex];
+        if (potentialRecordArg == "record") {
+            currentIndex++; // Consumed "record" keyword
+            record = true;
+            if (currentIndex < argc) { // Check if there's a filename for csvName
+                csvName = argv[currentIndex];
+                currentIndex++; // Consumed csvName
+            } else {
+                std::cerr << "Error: 'record' option specified but CSV filename is missing." << std::endl;
+                printUsage(argv[0]);
+                return 1;
+            }
+        }
+        // If potentialRecordArg was not "record", it will be caught in Phase 4 if not consumed
+    }
+
+    // --- Phase 4: Check for any remaining unexpected arguments ---
+    if (currentIndex < argc) {
+        std::cerr << "Error: Unexpected argument(s) found, starting with: '" << argv[currentIndex] << "'" << std::endl;
+        printUsage(argv[0]);
+        return 1;
+    }
+
+    // --- Output parsed values (for demonstration) ---
+    std::cout << "--- Parsed Arguments ---" << std::endl;
+    std::cout << "testBatchSize: " << testBatchSize << std::endl;
+    std::cout << "minPow: " << minPow << std::endl;
+    std::cout << "maxPow: " << maxPow << std::endl;
+    std::cout << "testType: " << testType << std::endl;
+    std::cout << "csvName: " << (csvName.empty() ? "[not set]" : csvName) << std::endl;
+    std::cout << "------------------------" << std::endl;
+
+    int currentDevice;
+    cudaError_t currentDevError = cudaGetDevice(&currentDevice);
+    if (currentDevError == cudaSuccess) {
+        std::cout << "\n--- Properties for currently selected GPU (Device " << currentDevice << ") ---" << std::endl;
+        printGpuProperties(currentDevice);
+    } else {
+        std::cerr << "cudaGetDevice returned " << static_cast<int>(currentDevError)
+                  << " -> " << cudaGetErrorString(currentDevError) << std::endl;
+    }
 
     uint32_t* err = nullptr;
     uint32_t* scan_in = nullptr;
@@ -321,6 +479,6 @@ int main(int argc, char* argv[]) {
     cudaFree(err);
     cudaFree(scan_in);
     cudaFree(scan_out);
-    std::this_thread::sleep_for(std::chrono::seconds(30));
+    std::this_thread::sleep_for(std::chrono::seconds(0));
     return EXIT_SUCCESS;
 }
