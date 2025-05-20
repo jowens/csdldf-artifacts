@@ -7,6 +7,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -757,6 +758,7 @@ void Run(std::string testLabel, const TestArgs& args,
     uint64_t totalTime = 0ULL;
     uint64_t maxTime = 0ULL;
     uint64_t minTime = ~0ULL;
+    std::map<uint64_t, unsigned int> timeMap;
     double totalSpins = 0;
     uint32_t lookbackLength = 0;
     uint32_t fallbacksInitiated = 0;
@@ -782,6 +784,7 @@ void Run(std::string testLabel, const TestArgs& args,
                 const uint64_t t = GetTime(args.gpu, &args.buffs, passCount);
                 maxTime = std::max(t, maxTime);
                 minTime = std::min(t, minTime);
+                timeMap[t]++;
                 totalTime += t;
                 if (args.shouldRecord) {
                     data.time[i - 1] = static_cast<double>(t);
@@ -860,6 +863,10 @@ void Run(std::string testLabel, const TestArgs& args,
                   << " / Max time "
                   << static_cast<double>(maxTime)
                   << std::endl;
+        std::cout << "Time map (runtime (ns) => number of runs that had that runtime): " << std::endl;
+        for (const auto& pair : timeMap) {
+            std::cout << "  " << pair.first << " => " << pair.second << std::endl;
+        }
         double speed =
             ((uint64_t)args.size * (uint64_t)(args.batchSize)) / dTime;
         printf("Estimated speed %e ele/s\n", speed);
