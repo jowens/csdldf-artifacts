@@ -772,6 +772,7 @@ void Run(std::string testLabel, const TestArgs& args,
     uint64_t maxTime = 0ULL;
     uint64_t minTime = ~0ULL;
     std::map<uint64_t, unsigned int> timeMap;
+    std::multimap<unsigned int, uint64_t> reverseTimeMap;
     double totalSpins = 0;
     uint32_t lookbackLength = 0;
     uint32_t fallbacksInitiated = 0;
@@ -876,10 +877,19 @@ void Run(std::string testLabel, const TestArgs& args,
                   << " / Max time "
                   << static_cast<double>(maxTime)
                   << std::endl;
-        std::cout << "Time map (runtime (ns) => number of runs that had that runtime): " << std::endl;
         for (const auto& pair : timeMap) {
-            std::cout << "  " << pair.first << " => " << pair.second << std::endl;
+            reverseTimeMap.insert({pair.second, pair.first});
         }
+        int timePrintCount = 5;
+        std::cout << "Top " << timePrintCount << " runtime (runtime (ns) => number of runs that had that runtime): { ";
+        for (auto it = reverseTimeMap.rbegin(); it != reverseTimeMap.rend() && timePrintCount != 0; ++it) {
+            std::cout << it->second << " => " << it->first;
+            timePrintCount--;
+            if (timePrintCount) {
+                std::cout << ", ";
+            }
+        }
+        std::cout << " }" << std::endl;
         double speed =
             ((uint64_t)args.size * (uint64_t)(args.batchSize)) / dTime;
         printf("Estimated speed %e ele/s\n", speed);
