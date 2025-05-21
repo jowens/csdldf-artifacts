@@ -147,7 +147,20 @@ void GetGPUContext(GPUContext* context, uint32_t timestampCount) {
                   << std::endl;
     };
 
+    // next 13 lines: from
+    // https://developer.chrome.com/blog/new-in-webgpu-120#timestamp_queries_quantization
+    wgpu::DawnTogglesDescriptor deviceTogglesDesc = {};
+
+    const char* allowUnsafeApisToggle = "allow_unsafe_apis";
+    deviceTogglesDesc.enabledToggles = &allowUnsafeApisToggle;
+    deviceTogglesDesc.enabledToggleCount = 1;
+
+    const char* timestampQuantizationToggle = "timestamp_quantization";
+    deviceTogglesDesc.disabledToggles = &timestampQuantizationToggle;
+    deviceTogglesDesc.disabledToggleCount = 1;
+
     wgpu::DeviceDescriptor devDescriptor{};
+    devDescriptor.nextInChain = &deviceTogglesDesc;
     devDescriptor.requiredFeatures = reqFeatures.data();
     devDescriptor.requiredFeatureCount =
         static_cast<uint32_t>(reqFeatures.size());
