@@ -41,7 +41,6 @@ struct GPUBuffers {
     wgpu::Buffer readbackTimestamp;
     wgpu::Buffer readback;
     wgpu::Buffer misc;
-    wgpu::Buffer misc2;
 };
 
 struct TestArgs {
@@ -238,12 +237,6 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs, uint32_t workT
     miscDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
     wgpu::Buffer misc = device.CreateBuffer(&miscDesc);
 
-    wgpu::BufferDescriptor misc2Desc = {};
-    misc2Desc.label = "Miscellaneous 2";
-    misc2Desc.size = sizeof(uint32_t) * workTiles;
-    misc2Desc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
-    wgpu::Buffer misc2 = device.CreateBuffer(&misc2Desc);
-
     (*buffs).info = info;
     (*buffs).scanIn = scanIn;
     (*buffs).scanOut = scanOut;
@@ -253,7 +246,6 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs, uint32_t workT
     (*buffs).readbackTimestamp = timestampReadback;
     (*buffs).readback = readback;
     (*buffs).misc = misc;
-    (*buffs).misc2 = misc2;
 }
 
 // For simplicity we will use the same brind group and layout for all kernels
@@ -291,11 +283,6 @@ void GetComputeShaderPipeline(const wgpu::Device& device, const GPUBuffers& buff
     bglMisc.binding = 5;
     bglMisc.visibility = wgpu::ShaderStage::Compute;
     bglMisc.buffer.type = wgpu::BufferBindingType::Storage;
-
-    wgpu::BindGroupLayoutEntry bglMisc2 = {};
-    bglMisc2.binding = 6;
-    bglMisc2.visibility = wgpu::ShaderStage::Compute;
-    bglMisc2.buffer.type = wgpu::BufferBindingType::Storage;
 
     std::vector<wgpu::BindGroupLayoutEntry> bglEntries{bglInfo,     bglScanIn,    bglScanOut,
                                                        bglScanBump, bglReduction, bglMisc};
@@ -335,11 +322,6 @@ void GetComputeShaderPipeline(const wgpu::Device& device, const GPUBuffers& buff
     bgMisc.binding = 5;
     bgMisc.buffer = buffs.misc;
     bgMisc.size = buffs.misc.GetSize();
-
-    wgpu::BindGroupEntry bgMisc2 = {};
-    bgMisc2.binding = 6;
-    bgMisc2.buffer = buffs.misc2;
-    bgMisc2.size = buffs.misc2.GetSize();
 
     std::vector<wgpu::BindGroupEntry> bgEntries{bgInfo,     bgScanIn,    bgScanOut,
                                                 bgScanBump, bgReduction, bgMisc};
@@ -568,75 +550,19 @@ void InitializeUniforms(const GPUContext& gpu, GPUBuffers* buffs, uint32_t size,
     QueueSync(gpu);
 }
 
-uint32_t RTS(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
-    const uint32_t passCount = 3;
-    if (args.shouldTime) {
-        SetComputePassTimed(args.shaders.reduce, comEncoder, args.gpu.querySet,
-                            args.workTiles, 0);
-        SetComputePassTimed(args.shaders.spineScan, comEncoder,
-                            args.gpu.querySet, 1, 1);
-        SetComputePassTimed(args.shaders.downsweep, comEncoder,
-                            args.gpu.querySet, args.workTiles, 2);
-    } else {
-        SetComputePass(args.shaders.reduce, comEncoder, args.workTiles);
-        SetComputePass(args.shaders.spineScan, comEncoder, 1);
-        SetComputePass(args.shaders.downsweep, comEncoder, args.workTiles);
+void RecordToCSV(const TestArgs& args, const std::vector<double>& time,
+                 const std::string& filename) {
+    std::ofstream file(filename + ".csv");
+    file << "time\n";
+    for (double t : time) {
+        file << t << "\n";
     }
-    return passCount;
+    file.close();
 }
 
-uint32_t CSDL(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
-    const uint32_t passCount = 1;
-    if (args.shouldTime) {
-        SetComputePassTimed(args.shaders.csdl, comEncoder, args.gpu.querySet,
-                            args.workTiles, 0);
-    } else {
-        SetComputePass(args.shaders.csdl, comEncoder, args.workTiles);
-    }
-    return passCount;
-}
-
-uint32_t CSDLDF(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
-    const uint32_t passCount = 1;
-    if (args.shouldTime) {
-        SetComputePassTimed(args.shaders.csdldf, comEncoder, args.gpu.querySet,
-                            args.workTiles, 0);
-    } else {
-        SetComputePass(args.shaders.csdldf, comEncoder, args.workTiles);
-    }
-    return passCount;
-}
-
-uint32_t CSDLDF_prof(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
-    const uint32_t passCount = 1;
-    if (args.shouldTime) {
-        SetComputePassTimed(args.shaders.csdldf, comEncoder, args.gpu.querySet,
-                            args.workTiles, 0);
-    } else {
-        SetComputePass(args.shaders.csdldf, comEncoder, args.workTiles);
-    }
-    return passCount;
-}
-
-uint32_t CSDLDFSimulate(const TestArgs& args,
-                        wgpu::CommandEncoder* comEncoder) {
-    const uint32_t passCount = 1;
-    if (args.shouldTime) {
-        SetComputePassTimed(args.shaders.csdldfSimulate, comEncoder,
-                            args.gpu.querySet, args.workTiles, 0);
-    } else {
-        SetComputePass(args.shaders.csdldfSimulate, comEncoder, args.workTiles);
-    }
-    return passCount;
-}
-
-uint32_t Memcpy(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
-    const uint32_t passCount = 1;
-    if (args.shouldTime) {
-        SetComputePassTimed(args.shaders.memcpy, comEncoder, args.gpu.querySet,
-                            args.workTiles, 0);
-    } else {
-        SetComputePass(args.shaders.memcpy, comEncoder, args.workTiles);
+void RunWarmup(const TestArgs& args) {
+    if (args.warmupSize == 0) {
+        return;
     }
 
     wgpu::CommandEncoderDescriptor comEncDesc = {};
@@ -785,15 +711,6 @@ void Run(std::string testLabel, const TestArgs& args) {
         }
         RecordToCSV(args, runTimesData, csvFilename);
         printf("Timing data recorded to %s.csv\n", csvFilename.c_str());
-    }
-}
-
-void TestCSDLDF_occupancy(std::string deviceName, const TestArgs& args) {
-    DataStruct data(args);
-    GetOccupancySync(args);
-    Run(deviceName + "CSDLDF_occupancy", args, CSDLDF_occupancy, data);
-    if (args.shouldRecord) {
-        RecordToCSV(args, data, deviceName + "CSDLDF_occupancy");
     }
 }
 
