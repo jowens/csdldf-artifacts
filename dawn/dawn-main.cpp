@@ -56,7 +56,7 @@ struct TestArgs {
     bool shouldRecord = false;
 };
 
-void GetGPUContext(GPUContext* context, uint32_t reqTimeStampQueries, int flag) {
+void GetGPUContext(GPUContext* context, uint32_t reqTimeStampQueries, int dawn_toggles) {
     wgpu::InstanceDescriptor instanceDescriptor{};
     instanceDescriptor.capabilities.timedWaitAnyEnable = true;
     wgpu::Instance instance = wgpu::CreateInstance(&instanceDescriptor);
@@ -114,11 +114,14 @@ void GetGPUContext(GPUContext* context, uint32_t reqTimeStampQueries, int flag) 
     wgpu::DawnTogglesDescriptor toggles = {};
     std::vector<const char*> enabled_toggles;
     enabled_toggles.push_back("allow_unsafe_apis");
-    if (flag & 1) {
+    if (dawn_toggles & 1) {
         enabled_toggles.push_back("disable_robustness");
     }
-    if (flag & 2) {
+    if (dawn_toggles & 2) {
         enabled_toggles.push_back("disable_workgroup_init");
+    }
+    if (dawn_toggles & 4) {
+        enabled_toggles.push_back("skip_validation");
     }
     toggles.enabledToggleCount = enabled_toggles.size();
     toggles.enabledToggles = enabled_toggles.data();
@@ -740,7 +743,7 @@ static void printUsageAndExit(const char* progName) {
     fprintf(stderr,
             "  <size_exponent_N>: For size = (1 << N). N must be > 10 and < 25 (i.e., 11 <= N <= "
             "24).\n");
-    fprintf(stderr, "  <toggle_flag>: Integer bitmask for GPU context toggles 0 <= N < 3.\n");
+    fprintf(stderr, "  <toggle_flag>: Integer bitmask for GPU context toggles 0 <= N < 7.\n");
     exit(EXIT_FAILURE);
 }
 
@@ -769,7 +772,7 @@ int main(int argc, char* argv[]) {
     uint32_t cli_toggle_flag;
 
     if (!parseU32(argv[2], cli_size_exponent, 11, 25) || !parseU32(argv[3], cli_warmupSize) ||
-        !parseU32(argv[4], cli_batchSize) || !parseU32(argv[6], cli_toggle_flag, 0, 3)) {
+        !parseU32(argv[4], cli_batchSize) || !parseU32(argv[6], cli_toggle_flag, 0, 7)) {
         printUsageAndExit(argv[0]);
     }
     cli_size_actual = 1U << cli_size_exponent;
