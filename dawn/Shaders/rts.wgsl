@@ -35,6 +35,9 @@ var<storage, read_write> spine: array<u32>;
 @group(0) @binding(5)
 var<storage, read_write> misc: array<u32>;
 
+@group(0) @binding(6)
+var<storage, read_write> unused_2: atomic<u32>;
+
 const BLOCK_DIM = 256u;
 const MIN_SUBGROUP_SIZE = 4u;
 const MAX_PARTIALS_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE;

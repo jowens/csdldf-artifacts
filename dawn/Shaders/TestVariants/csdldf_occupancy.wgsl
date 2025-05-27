@@ -32,10 +32,10 @@ var<storage, read_write> scan_bump: atomic<u32>;
 var<storage, read_write> spine: array<array<atomic<u32>, 2>>;
 
 @group(0) @binding(5)
-var<storage, read_write> occupancy: array<u32>;
+var<storage, read_write> occupancy_atomic: atomic<u32>;
 
 @group(0) @binding(6)
-var<storage, read_write> occupancy_atomic: atomic<u32>;
+var<storage, read_write> occupancy: array<u32>;
 
 const BLOCK_DIM = 256u;
 const SPLIT_MEMBERS = 2u;

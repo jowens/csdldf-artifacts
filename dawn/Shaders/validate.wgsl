@@ -32,6 +32,9 @@ var<storage, read_write> unused_3: array<u32>;
 @group(0) @binding(5)
 var<storage, read_write> error: array<atomic<u32>>;
 
+@group(0) @binding(6)
+var<storage, read_write> unused_4: atomic<u32>;
+
 const ERR_COUNT_INDEX = 0u;
 const BLOCK_DIM = 256u;
 

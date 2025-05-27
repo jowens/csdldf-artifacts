@@ -33,6 +33,9 @@ var<storage, read_write> unused_2: array<u32>;
 @group(0) @binding(5)
 var<storage, read_write> unused_3: array<u32>;
 
+@group(0) @binding(6)
+var<storage, read_write> unused_4: atomic<u32>;
+
 const BLOCK_DIM = 256u;
 const VEC4_SPT = 4u;
 const VEC_TILE_SIZE = BLOCK_DIM * VEC4_SPT;

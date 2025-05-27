@@ -34,6 +34,9 @@ var<storage, read_write> spine: array<u32>;
 @group(0) @binding(5)
 var<storage, read_write> misc: array<u32>;
 
+@group(0) @binding(6)
+var<storage, read_write> unused_2: atomic<u32>;
+
 const MISC_SIZE = 5u;
 const SPLIT_MEMBERS = 2u;
 
