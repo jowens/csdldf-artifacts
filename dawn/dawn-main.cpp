@@ -50,8 +50,9 @@ struct TestArgs {
     Shaders& shaders;
     uint32_t size;
     uint32_t workTiles;
-    uint32_t warmupSize;
-    uint32_t batchSize;
+    uint32_t warmupRuns;
+    uint32_t totalRuns;
+    uint32_t maxBatchSize;
     uint32_t maxQueryEntries;
     bool shouldRecord = false;
 };
@@ -582,7 +583,7 @@ void RecordToCSV(const TestArgs& args, const std::vector<double>& time,
 }
 
 void RunWarmup(const TestArgs& args) {
-    if (args.warmupSize == 0) {
+    if (args.warmupRuns == 0) {
         return;
     }
 
@@ -590,7 +591,7 @@ void RunWarmup(const TestArgs& args) {
     comEncDesc.label = "Warmup Command Encoder";
     wgpu::CommandEncoder comEncoder = args.gpu.device.CreateCommandEncoder(&comEncDesc);
 
-    for (uint32_t i = 0; i < args.warmupSize; ++i) {
+    for (uint32_t i = 0; i < args.warmupRuns; ++i) {
         SetComputePass(args.shaders.init, &comEncoder, 256);
         SetComputePass(args.shaders.csdldf, &comEncoder, args.workTiles);
     }
@@ -601,8 +602,8 @@ void RunWarmup(const TestArgs& args) {
 }
 
 void Run(std::string testLabel, const TestArgs& args) {
-    if (args.batchSize == 0) {
-        printf("%s: No actual tests to run (batchSize is 0).\n", testLabel.c_str());
+    if (args.totalRuns == 0) {
+        printf("%s: No actual tests to run (totalRuns is 0).\n", testLabel.c_str());
         return;
     }
 
@@ -611,10 +612,13 @@ void Run(std::string testLabel, const TestArgs& args) {
     uint64_t minTime = ~0ULL;
     std::map<uint64_t, unsigned int> timeMap;
     std::multimap<unsigned int, uint64_t> reverseTimeMap;
-    std::vector<double> runTimesData(args.shouldRecord ? args.batchSize : 0);
+    std::vector<double> runTimesData(args.shouldRecord ? args.totalRuns : 0);
 
-    const uint32_t maxRunsInGPUBatch = args.maxQueryEntries / 2;
-    uint32_t numRunsToExecute = args.batchSize;
+    // batch size is limited by the lesser of
+    // - how many entries we have in our query buffer
+    // - the maxBatchSize argument
+    const uint32_t maxRunsInGPUBatch = std::min(args.maxQueryEntries / 2, args.maxBatchSize);
+    uint32_t numRunsToExecute = args.totalRuns;
     uint32_t runsExecutedCount = 0;
 
     while (runsExecutedCount < numRunsToExecute) {
@@ -675,7 +679,8 @@ void Run(std::string testLabel, const TestArgs& args) {
     printf("\n--- Timing Summary for: %s (Timed Runs) ---\n", testLabel.c_str());
 
     if (numRunsToExecute > 0) {
-        printf("Statistics for %u timed test run(s):\n", numRunsToExecute);
+        printf("Statistics for %u timed test run(s) in batches of %u:\n", numRunsToExecute,
+               maxRunsInGPUBatch);
         printf("  Total time: %.4f s\n", totalTimeAllSec);
 
         double avgTimeRunNS = (totalTime > 0 && numRunsToExecute > 0)
@@ -735,14 +740,17 @@ void Run(std::string testLabel, const TestArgs& args) {
     }
 }
 
-static void printUsageAndExit(const char* progName) {
+static void printUsageAndExit(const char* progName, const char* errorMsg) {
+    fprintf(stderr, "Error: ");
+    fprintf(stderr, errorMsg);
     fprintf(stderr,
-            "Usage: %s <deviceName> <size_exponent_N> <warmupSize> <batchSize> "
+            "\nUsage: %s <deviceName> <size_exponent_N> <warmupRuns> <totalRuns> <maxBatchSize> "
             "<shouldRecord:true|false|1|0> <toggle_flag>\n",
             progName);
     fprintf(stderr,
             "  <size_exponent_N>: For size = (1 << N). N must be > 10 and < 25 (i.e., 11 <= N <= "
             "24).\n");
+    fprintf(stderr, "  <maxBatchSize>: If argument is 0, maxBatchSize is set to totalRuns.\n");
     fprintf(stderr, "  <toggle_flag>: Integer bitmask for GPU context toggles 0 <= N < 7.\n");
     exit(EXIT_FAILURE);
 }
@@ -759,32 +767,34 @@ static bool parseU32(const char* s, uint32_t& val, uint32_t min_incl = 0,
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 7) {
-        printUsageAndExit(argv[0]);
+    if (argc != 8) {
+        printUsageAndExit(argv[0], "Wrong number of arguments");
     }
 
     std::string cli_deviceName = argv[1];
     uint32_t cli_size_exponent;
     uint32_t cli_size_actual;
-    uint32_t cli_warmupSize;
-    uint32_t cli_batchSize;
+    uint32_t cli_warmupRuns;
+    uint32_t cli_totalRuns;
+    uint32_t cli_maxBatchSize;
     bool cli_shouldRecord;
     uint32_t cli_toggle_flag;
 
-    if (!parseU32(argv[2], cli_size_exponent, 11, 25) || !parseU32(argv[3], cli_warmupSize) ||
-        !parseU32(argv[4], cli_batchSize) || !parseU32(argv[6], cli_toggle_flag, 0, 7)) {
-        printUsageAndExit(argv[0]);
+    if (!parseU32(argv[2], cli_size_exponent, 11, 25) || !parseU32(argv[3], cli_warmupRuns) ||
+        !parseU32(argv[4], cli_totalRuns) || !parseU32(argv[5], cli_maxBatchSize) ||
+        !parseU32(argv[7], cli_toggle_flag, 0, 7)) {
+        printUsageAndExit(argv[0], "Arguments did not validate");
     }
     cli_size_actual = 1U << cli_size_exponent;
 
-    std::string recordStr = argv[5];
+    std::string recordStr = argv[6];
     std::transform(recordStr.begin(), recordStr.end(), recordStr.begin(), ::tolower);
     if (recordStr == "true" || recordStr == "1") {
         cli_shouldRecord = true;
     } else if (recordStr == "false" || recordStr == "0") {
         cli_shouldRecord = false;
     } else {
-        printUsageAndExit(argv[0]);
+        printUsageAndExit(argv[0], "recordStr argument did not validate (must be true/1/false/0)");
     }
 
     constexpr uint32_t MISC_SIZE = 5;
@@ -808,8 +818,9 @@ int main(int argc, char* argv[]) {
                      shaders,
                      cli_size_actual,
                      workTiles,
-                     cli_warmupSize,
-                     cli_batchSize,
+                     cli_warmupRuns,
+                     cli_totalRuns,
+                     cli_maxBatchSize == 0 ? cli_totalRuns : cli_maxBatchSize,
                      MAX_QUERY_ENTRIES,
                      cli_shouldRecord};
 
