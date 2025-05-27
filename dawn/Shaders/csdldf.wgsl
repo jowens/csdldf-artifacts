@@ -17,7 +17,7 @@ struct ScanParameters
 };
 
 @group(0) @binding(0)
-var<uniform> params : ScanParameters; 
+var<uniform> params : ScanParameters;
 
 @group(0) @binding(1)
 var<storage, read_write> scan_in: array<vec4<u32>>;
@@ -70,7 +70,7 @@ fn unsafeShuffle(x: u32, source: u32) -> u32 {
 //we never need them across all subgroup sizes
 @diagnostic(off, subgroup_uniformity)
 fn unsafeBallot(pred: bool) -> u32 {
-    return subgroupBallot(pred).x;  
+    return subgroupBallot(pred).x;
 }
 
 fn join(mine: u32, tid: u32) -> u32 {
@@ -88,9 +88,9 @@ fn main(
     @builtin(local_invocation_id) threadid: vec3<u32>,
     @builtin(subgroup_invocation_id) laneid: u32,
     @builtin(subgroup_size) lane_count: u32) {
-    
+
     let sid = threadid.x / lane_count;  //Caution 1D workgoup ONLY! Ok, but technically not in HLSL spec
-    
+
     //acquire partition index, set the lock
     if(threadid.x == 0u){
         wg_broadcast = atomicAdd(&scan_bump, 1u);
@@ -143,7 +143,7 @@ fn main(
     let lane_log = u32(countTrailingZeros(lane_count));
     let local_spine = BLOCK_DIM >> lane_log;
     let aligned_size = 1u << ((u32(countTrailingZeros(local_spine)) + lane_log - 1u) / lane_log * lane_log);
-    {   
+    {
         var offset = 0u;
         var top_offset = 0u;
         let lane_pred = laneid == lane_count - 1u;
@@ -169,7 +169,7 @@ fn main(
             top_offset += step;
             offset += lane_log;
         }
-    }   
+    }
     workgroupBarrier();
 
     //Device broadcast
@@ -270,7 +270,7 @@ fn main(
                     }
                     let incl_found = unsafeBallot((f_payload & FLAG_MASK) == FLAG_INCLUSIVE) == ALL_READY;
                     if(incl_found){
-                        prev_red += join(f_payload & VALUE_MASK, threadid.x); 
+                        prev_red += join(f_payload & VALUE_MASK, threadid.x);
                     } else {
                         prev_red += f_red;
                     }
