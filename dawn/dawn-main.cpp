@@ -41,6 +41,7 @@ struct GPUBuffers {
     wgpu::Buffer readbackTimestamp;
     wgpu::Buffer readback;
     wgpu::Buffer misc;
+    wgpu::Buffer miscArray;
 };
 
 struct TestArgs {
@@ -237,6 +238,12 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs, uint32_t workT
     miscDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
     wgpu::Buffer misc = device.CreateBuffer(&miscDesc);
 
+    wgpu::BufferDescriptor miscArrayDesc = {};
+    miscArrayDesc.label = "Miscellaneous Array";
+    miscArrayDesc.size = sizeof(uint32_t) * workTiles;
+    miscArrayDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
+    wgpu::Buffer miscArray = device.CreateBuffer(&miscArrayDesc);
+
     (*buffs).info = info;
     (*buffs).scanIn = scanIn;
     (*buffs).scanOut = scanOut;
@@ -246,6 +253,7 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs, uint32_t workT
     (*buffs).readbackTimestamp = timestampReadback;
     (*buffs).readback = readback;
     (*buffs).misc = misc;
+    (*buffs).miscArray = miscArray;
 }
 
 // For simplicity we will use the same brind group and layout for all kernels
@@ -284,8 +292,13 @@ void GetComputeShaderPipeline(const wgpu::Device& device, const GPUBuffers& buff
     bglMisc.visibility = wgpu::ShaderStage::Compute;
     bglMisc.buffer.type = wgpu::BufferBindingType::Storage;
 
-    std::vector<wgpu::BindGroupLayoutEntry> bglEntries{bglInfo,     bglScanIn,    bglScanOut,
-                                                       bglScanBump, bglReduction, bglMisc};
+    wgpu::BindGroupLayoutEntry bglMiscArray = {};
+    bglMiscArray.binding = 6;
+    bglMiscArray.visibility = wgpu::ShaderStage::Compute;
+    bglMiscArray.buffer.type = wgpu::BufferBindingType::Storage;
+
+    std::vector<wgpu::BindGroupLayoutEntry> bglEntries{
+        bglInfo, bglScanIn, bglScanOut, bglScanBump, bglReduction, bglMisc, bglMiscArray};
 
     wgpu::BindGroupLayoutDescriptor bglDesc = {};
     bglDesc.label = makeLabel("Bind Group Layout").c_str();
@@ -323,8 +336,13 @@ void GetComputeShaderPipeline(const wgpu::Device& device, const GPUBuffers& buff
     bgMisc.buffer = buffs.misc;
     bgMisc.size = buffs.misc.GetSize();
 
-    std::vector<wgpu::BindGroupEntry> bgEntries{bgInfo,     bgScanIn,    bgScanOut,
-                                                bgScanBump, bgReduction, bgMisc};
+    wgpu::BindGroupEntry bgMiscArray = {};
+    bgMiscArray.binding = 6;
+    bgMiscArray.buffer = buffs.miscArray;
+    bgMiscArray.size = buffs.miscArray.GetSize();
+
+    std::vector<wgpu::BindGroupEntry> bgEntries{bgInfo,      bgScanIn, bgScanOut,  bgScanBump,
+                                                bgReduction, bgMisc,   bgMiscArray};
 
     wgpu::BindGroupDescriptor bindGroupDesc = {};
     bindGroupDesc.entries = bgEntries.data();
