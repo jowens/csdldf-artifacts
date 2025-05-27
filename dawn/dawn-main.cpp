@@ -34,6 +34,7 @@ struct Shaders {
     ComputeShader csdldf;
     ComputeShader csdldfOcc;
     ComputeShader csdldfSimulate;
+    ComputeShader csdldfOccupancy;
     ComputeShader memcpy;
     ComputeShader validate;
 };
@@ -48,6 +49,7 @@ struct GPUBuffers {
     wgpu::Buffer readbackTimestamp;
     wgpu::Buffer readback;
     wgpu::Buffer misc;
+    wgpu::Buffer misc2;
 };
 
 struct TestArgs {
@@ -285,6 +287,12 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs,
     miscDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
     wgpu::Buffer misc = device.CreateBuffer(&miscDesc);
 
+    wgpu::BufferDescriptor misc2Desc = {};
+    misc2Desc.label = "Miscellaneous 2";
+    misc2Desc.size = sizeof(uint32_t) * workTiles;
+    misc2Desc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
+    wgpu::Buffer misc2 = device.CreateBuffer(&misc2Desc);
+
     (*buffs).info = info;
     (*buffs).scanIn = scanIn;
     (*buffs).scanOut = scanOut;
@@ -294,6 +302,7 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs,
     (*buffs).readbackTimestamp = timestampReadback;
     (*buffs).readback = readback;
     (*buffs).misc = misc;
+    (*buffs).misc2 = misc2;
 }
 
 // For simplicity we will use the same brind group and layout for all kernels
@@ -336,8 +345,13 @@ void GetComputeShaderPipeline(const wgpu::Device& device,
     bglMisc.visibility = wgpu::ShaderStage::Compute;
     bglMisc.buffer.type = wgpu::BufferBindingType::Storage;
 
+    wgpu::BindGroupLayoutEntry bglMisc2 = {};
+    bglMisc2.binding = 6;
+    bglMisc2.visibility = wgpu::ShaderStage::Compute;
+    bglMisc2.buffer.type = wgpu::BufferBindingType::Storage;
+
     std::vector<wgpu::BindGroupLayoutEntry> bglEntries{
-        bglInfo, bglScanIn, bglScanOut, bglScanBump, bglReduction, bglMisc};
+        bglInfo, bglScanIn, bglScanOut, bglScanBump, bglReduction, bglMisc, bglMisc2};
 
     wgpu::BindGroupLayoutDescriptor bglDesc = {};
     bglDesc.label = makeLabel("Bind Group Layout").c_str();
@@ -375,8 +389,13 @@ void GetComputeShaderPipeline(const wgpu::Device& device,
     bgMisc.buffer = buffs.misc;
     bgMisc.size = buffs.misc.GetSize();
 
+    wgpu::BindGroupEntry bgMisc2 = {};
+    bgMisc2.binding = 6;
+    bgMisc2.buffer = buffs.misc2;
+    bgMisc2.size = buffs.misc2.GetSize();
+
     std::vector<wgpu::BindGroupEntry> bgEntries{
-        bgInfo, bgScanIn, bgScanOut, bgScanBump, bgReduction, bgMisc};
+        bgInfo, bgScanIn, bgScanOut, bgScanBump, bgReduction, bgMisc, bgMisc2};
 
     wgpu::BindGroupDescriptor bindGroupDesc = {};
     bindGroupDesc.entries = bgEntries.data();
@@ -488,6 +507,10 @@ void GetAllShaders(const GPUContext& gpu, const GPUBuffers& buffs,
     CreateShaderFromSource(gpu, buffs, &shaders->csdldfOcc, "main",
                            "Shaders/TestVariants/csdldf_occ.wgsl", "CSDLDF OCC",
                            empty);
+
+    CreateShaderFromSource(gpu, buffs, &shaders->csdldfOccupancy, "main",
+                           "Shaders/TestVariants/csdldf_occupancy.wgsl", "CSDLDF Occupancy",
+                           empty);                           
 
     CreateShaderFromSource(gpu, buffs, &shaders->memcpy, "main",
                            "Shaders/memcpy.wgsl", "Memcpy", empty);
@@ -719,6 +742,17 @@ uint32_t CSDLDF_prof(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
     return passCount;
 }
 
+uint32_t CSDLDF_occupancy(const TestArgs& args, wgpu::CommandEncoder* comEncoder) {
+    const uint32_t passCount = 1;
+    if (args.shouldTime) {
+        SetComputePassTimed(args.shaders.csdldfOccupancy, comEncoder, args.gpu.querySet,
+                            args.workTiles, 0);
+    } else {
+        SetComputePass(args.shaders.csdldfOccupancy, comEncoder, args.workTiles);
+    }
+    return passCount;
+}
+
 uint32_t CSDLDFSimulate(const TestArgs& args,
                         wgpu::CommandEncoder* comEncoder) {
     const uint32_t passCount = 1;
@@ -939,6 +973,7 @@ enum TestType {
     Csdl,
     Csdldf,
     Csdldf_prof,
+    Csdldf_occupancy,
     Full,
     SizeCsdldf,
     SizeMemcpy,
@@ -977,6 +1012,15 @@ void TestCSDLDF_prof(std::string deviceName, const TestArgs& args) {
     Run(deviceName + "CSDLDF_prof", args, CSDLDF_prof, data);
     if (args.shouldRecord) {
         RecordToCSV(args, data, deviceName + "CSDLDF_prof");
+    }
+}
+
+void TestCSDLDF_occupancy(std::string deviceName, const TestArgs& args) {
+    DataStruct data(args);
+    GetOccupancySync(args);
+    Run(deviceName + "CSDLDF_occupancy", args, CSDLDF_occupancy, data);
+    if (args.shouldRecord) {
+        RecordToCSV(args, data, deviceName + "CSDLDF_occupancy");
     }
 }
 
@@ -1086,7 +1130,7 @@ void TestMemcpySize(std::string deviceName, uint32_t PART_SIZE,
 
 auto printUsage = []() {
     std::cerr << "Usage: <TestType: "
-                 "\"csdl\"|\"csdldf\"|\"csdldf_prof\"|\"full\"|\"sizecsdldf\"|\"sizememcpy\"> "
+                 "\"csdl\"|\"csdldf\"|\"csdldf_prof\"|\"csdldf_occupancy\"|\"full\"|\"sizecsdldf\"|\"sizememcpy\"> "
                  "[\"--record\"] [deviceName]"
               << std::endl;
 };
@@ -1125,6 +1169,8 @@ int main(int argc, char* argv[]) {
         testType = Csdldf;
     } else if (testTypeStr == "csdldf_prof") {
         testType = Csdldf_prof;
+    } else if (testTypeStr == "csdldf_occupancy") {
+        testType = Csdldf_occupancy;
     } else if (testTypeStr == "full") {
         testType = Full;
     } else if (testTypeStr == "sizecsdldf") {
@@ -1218,6 +1264,9 @@ int main(int argc, char* argv[]) {
                 break;
             case Csdldf_prof:
                 TestCSDLDF_prof(deviceName, args);
+                break;
+            case Csdldf_occupancy:
+                TestCSDLDF_occupancy(deviceName, args);
                 break;
             case Full:
                 TestMemcpy(deviceName, args);
