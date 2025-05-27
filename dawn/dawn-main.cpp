@@ -83,7 +83,19 @@ struct DataStruct {
     }
 };
 
-void GetGPUContext(GPUContext* context, uint32_t timestampCount) {
+void printVectorOfCStrings(const char * label, const std::vector<const char*>& vec) {
+    std::cout << label << ": [ ";
+    for (const char* str : vec) {
+        if (str != nullptr) {
+            std::cout << str << " ";
+        } else {
+            std::cout << "[nullptr] ";
+        }
+    }
+    std::cout << "]" << std::endl;
+}
+
+void GetGPUContext(GPUContext* context, uint32_t timestampCount, int flag) {
     wgpu::InstanceDescriptor instanceDescriptor{};
     instanceDescriptor.capabilities.timedWaitAnyEnable = true;
     wgpu::Instance instance = wgpu::CreateInstance(&instanceDescriptor);
@@ -149,18 +161,31 @@ void GetGPUContext(GPUContext* context, uint32_t timestampCount) {
 
     // next 13 lines: from
     // https://developer.chrome.com/blog/new-in-webgpu-120#timestamp_queries_quantization
-    wgpu::DawnTogglesDescriptor deviceTogglesDesc = {};
+    wgpu::DawnTogglesDescriptor toggles = {};
+    std::vector<const char*> enabled_toggles;
+    enabled_toggles.push_back("allow_unsafe_apis");
+    if (flag & 1) {
+    enabled_toggles.push_back("disable_robustness");
+    }
+    if (flag & 2) {
+    enabled_toggles.push_back("disable_workgroup_init");
+    }
+    if (flag & 4) {
+    enabled_toggles.push_back("skip_validation");
+    }
+    toggles.enabledToggleCount = enabled_toggles.size();
+    toggles.enabledToggles = enabled_toggles.data();
 
-    const char* allowUnsafeApisToggle = "allow_unsafe_apis";
-    deviceTogglesDesc.enabledToggles = &allowUnsafeApisToggle;
-    deviceTogglesDesc.enabledToggleCount = 1;
+    std::vector<const char*> disabled_toggles;
+    disabled_toggles.push_back("timestamp_quantization");
+    toggles.disabledToggleCount = disabled_toggles.size();
+    toggles.disabledToggles = disabled_toggles.data();
 
-    const char* timestampQuantizationToggle = "timestamp_quantization";
-    deviceTogglesDesc.disabledToggles = &timestampQuantizationToggle;
-    deviceTogglesDesc.disabledToggleCount = 1;
+    printVectorOfCStrings("Enabled toggles", enabled_toggles);
+    printVectorOfCStrings("Disabled toggles", disabled_toggles);
 
     wgpu::DeviceDescriptor devDescriptor{};
-    devDescriptor.nextInChain = &deviceTogglesDesc;
+    devDescriptor.nextInChain = &toggles;
     devDescriptor.requiredFeatures = reqFeatures.data();
     devDescriptor.requiredFeatureCount =
         static_cast<uint32_t>(reqFeatures.size());
@@ -893,6 +918,10 @@ void Run(std::string testLabel, const TestArgs& args,
         double speed =
             ((uint64_t)args.size * (uint64_t)(args.batchSize)) / dTime;
         printf("Estimated speed %e ele/s\n", speed);
+        std::cout << "Data size: " << data.time.size() << std::endl;
+         for (size_t i = 0; i < data.time.size(); ++i) {
+            std::cout << data.time[i] << std::endl;
+        }
     }
     auto startTime = std::chrono::steady_clock::now();
   
@@ -1058,16 +1087,36 @@ void TestMemcpySize(std::string deviceName, uint32_t PART_SIZE,
 auto printUsage = []() {
     std::cerr << "Usage: <TestType: "
                  "\"csdl\"|\"csdldf\"|\"csdldf_prof\"|\"full\"|\"sizecsdldf\"|\"sizememcpy\"> "
-                 "[\"record\"] [deviceName]"
+                 "[\"--record\"] [deviceName]"
               << std::endl;
 };
 
+uint32_t getNumericalArg(int argc, char * argv[], int & i, uint32_t & val) {
+    char * arg = argv[i];
+    if (i + 1 < argc) {
+        try {
+            val = std::stoi(argv[++i]); // Convert string to int and advance iterator
+        } catch (const std::invalid_argument&) {
+            std::cerr << "Error: --" << arg << " requires a valid number. Received: " << argv[i] << std::endl;
+            return EXIT_FAILURE;
+        } catch (const std::out_of_range&) {
+            std::cerr << "Error: Number for --" << arg << " is out of range. Received: " << argv[i] << std::endl;
+            return EXIT_FAILURE;
+        }
+    } else {
+        std::cerr << "Error: --" << arg << " requires a number argument." << std::endl;
+        return EXIT_FAILURE;
+    }
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
-    if (argc < 2 || argc > 4) {
+    if (argc < 2) {
         printUsage();
         return EXIT_FAILURE;
     }
-
+ 
+    // argv[1] is always testType
     TestType testType;
     std::string testTypeStr = argv[1];
     if (testTypeStr == "csdl") {
@@ -1086,17 +1135,39 @@ int main(int argc, char* argv[]) {
         printUsage();
         return EXIT_FAILURE;
     }
-
+    
     bool shouldRecord = false;
     std::string deviceName;
-    if (argc >= 3) {
-        if (std::string(argv[2]) == "record") {
+    uint32_t flags = 0;
+    uint32_t size = testType == Csdldf_prof ? 1 << 19 : 1 << 25;    // Size of the scan operation
+    uint32_t batchSize = testType == Csdldf_prof ? 1000 : 2000;  // How many tests to run
+    // Parse optional arguments starting from the second argument
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == "--record") {
             shouldRecord = true;
-            if (argc == 4) {
-                deviceName = std::string(argv[3]) + "_";
+            // Check for optional deviceName
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                deviceName = std::string(argv[++i]) + "+"; // Store deviceName and advance iterator
+            }
+        } else if (arg == "--flags") {
+            int retval = getNumericalArg(argc, argv, i, flags);
+            if (retval != 0) {
+                return retval;
+            }
+        } else if (arg == "--size") {
+            int retval = getNumericalArg(argc, argv, i, size);
+            if (retval != 0) {
+                return retval;
+            }
+        } else if (arg == "--batchsize") {
+            int retval = getNumericalArg(argc, argv, i, batchSize);
+            if (retval != 0) {
+                return retval;
             }
         } else {
-            printUsage();
+            std::cerr << "Warning: Unknown argument '" << arg << "' ignored." << std::endl;
             return EXIT_FAILURE;
         }
     }
@@ -1111,8 +1182,7 @@ int main(int argc, char* argv[]) {
         8192;                             // Max size of our readback buffer
     constexpr uint32_t MAX_SIMULATE = 9;  // Max power to simulate blocking
 
-    const uint32_t size = testType == Csdldf_prof ? 1 << 19 : 1 << 25;    // Size of the scan operation
-    const uint32_t batchSize = testType == Csdldf_prof ? 1000 : 2000;  // How many tests to run
+
     const uint32_t
         workTiles =  // Work Tiles/Thread Blocks to launch based on input
         (size + PART_SIZE - 1) / PART_SIZE;
@@ -1128,38 +1198,40 @@ int main(int argc, char* argv[]) {
     GPUContext gpu;
     GPUBuffers buffs;
     Shaders shaders;
-    GetGPUContext(&gpu, MAX_TIMESTAMPS);
-    GetGPUBuffers(gpu.device, &buffs, workTiles, MAX_TIMESTAMPS, size,
-                  MISC_SIZE, MAX_READBACK_SIZE);
-    GetAllShaders(gpu, buffs, &shaders);
-    InitializeUniforms(gpu, &buffs, size, workTiles, 0);
-    TestArgs args = {gpu,          buffs,          shaders,
-                     size,         batchSize,      workTiles,
-                     readbackSize, shouldValidate, shouldReadback,
-                     shouldTime,   false,          shouldRecord};
+    for (uint32_t flag = 0; flag <= flags; flag++) {
+        GetGPUContext(&gpu, MAX_TIMESTAMPS, flag);
+        GetGPUBuffers(gpu.device, &buffs, workTiles, MAX_TIMESTAMPS, size,
+                      MISC_SIZE, MAX_READBACK_SIZE);
+        GetAllShaders(gpu, buffs, &shaders);
+        InitializeUniforms(gpu, &buffs, size, workTiles, 0);
+        TestArgs args = {gpu,          buffs,          shaders,
+                        size,         batchSize,      workTiles,
+                        readbackSize, shouldValidate, shouldReadback,
+                        shouldTime,   false,          shouldRecord};
 
-    switch (testType) {
-        case Csdl:
-            TestCSDL(deviceName, args);
-            break;
-        case Csdldf:
-            TestCSDLDF(deviceName, args);
-            break;
-        case Csdldf_prof:
-            TestCSDLDF_prof(deviceName, args);
-            break;
-        case Full:
-            TestMemcpy(deviceName, args);
-            TestFull(deviceName, 9, args);
-            break;
-        case SizeCsdldf:
-            TestSize(deviceName, PART_SIZE, args);
-            break;
-        case SizeMemcpy:
-            TestMemcpySize(deviceName, PART_SIZE, args);
-            break;
-        default:
-            break;
+        switch (testType) {
+            case Csdl:
+                TestCSDL(deviceName, args);
+                break;
+            case Csdldf:
+                TestCSDLDF(deviceName, args);
+                break;
+            case Csdldf_prof:
+                TestCSDLDF_prof(deviceName, args);
+                break;
+            case Full:
+                TestMemcpy(deviceName, args);
+                TestFull(deviceName, 9, args);
+                break;
+            case SizeCsdldf:
+                TestSize(deviceName, PART_SIZE, args);
+                break;
+            case SizeMemcpy:
+                TestMemcpySize(deviceName, PART_SIZE, args);
+                break;
+            default:
+                break;
+        }
     }
     return EXIT_SUCCESS;
 }
